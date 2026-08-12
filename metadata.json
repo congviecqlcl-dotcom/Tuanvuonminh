@@ -1,0 +1,6 @@
+{
+  "name": "Thẩm định Hồ sơ An toàn Thực phẩm",
+  "description": "Hệ thống hỗ trợ công chức thẩm định hồ sơ đề nghị cấp Giấy chứng nhận cơ sở đủ điều kiện an toàn thực phẩm với OCR và AI đối chiếu checklist.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
