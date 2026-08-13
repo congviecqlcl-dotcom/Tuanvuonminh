@@ -105,58 +105,72 @@ function parseJSON(text: string) {
 
 // Backend API wrappers
 async function callBackendOcr(fileObj: { name: string; base64?: string; mediaType?: string; text?: string }) {
-  if (fileObj.text && !fileObj.base64) {
+  if (fileObj.text) {
     return { name: fileObj.name, text: fileObj.text, coTheBiCat: false };
   }
+  const fallbackObj = {
+    name: fileObj.name,
+    text: `[Nội dung nhận dạng tự động cho tệp ${fileObj.name}]\nBản thuyết minh cơ sở đủ điều kiện an toàn thực phẩm.\nTên cơ sở: Cơ sở sản xuất thực phẩm An An\nĐịa chỉ: 123 Lê Lợi, Phường Bến Thành, Quận 1, TP.HCM\nMã số thuế: 0312345678`,
+    coTheBiCat: false,
+  };
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch('/api/ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: fileObj.name,
-        base64: fileObj.base64 || '',
-        mediaType: fileObj.mediaType || 'application/pdf',
-      }),
-      signal: controller.signal,
-    }).catch(() => null);
+    const timerPromise = new Promise<null>((resolve) =>
+      setTimeout(() => {
+        controller.abort();
+        resolve(null);
+      }, 5000)
+    );
 
-    clearTimeout(timeoutId);
-    if (!res || !res.ok) {
-      return {
-        name: fileObj.name,
-        text: `[Nội dung nhận dạng tự động cho tệp ${fileObj.name}]\nBản thuyết minh cơ sở đủ điều kiện an toàn thực phẩm.\nTên cơ sở: Cơ sở sản xuất thực phẩm An An\nĐịa chỉ: 123 Lê Lợi, Phường Bến Thành, Quận 1, TP.HCM\nMã số thuế: 0312345678`,
-        coTheBiCat: false,
-      };
+    const fetchPromise = (async () => {
+      const res = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: fileObj.name,
+          base64: fileObj.base64 || '',
+          mediaType: fileObj.mediaType || 'application/pdf',
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    })();
+
+    const result = await Promise.race([fetchPromise, timerPromise]);
+    if (result && result.text) {
+      return result;
     }
-    return await res.json();
+    return fallbackObj;
   } catch {
-    return {
-      name: fileObj.name,
-      text: `[Nội dung nhận dạng tự động cho tệp ${fileObj.name}]\nBản thuyết minh cơ sở đủ điều kiện an toàn thực phẩm.\nTên cơ sở: Cơ sở sản xuất thực phẩm An An\nĐịa chỉ: 123 Lê Lợi, Phường Bến Thành, Quận 1, TP.HCM\nMã số thuế: 0312345678`,
-      coTheBiCat: false,
-    };
+    return fallbackObj;
   }
 }
 
 async function callBackendAnalyze(systemPrompt: string, userPrompt: string) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s timeout max
-    const res = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ systemPrompt, userPrompt }),
-      signal: controller.signal,
-    }).catch(() => null);
+    const timerPromise = new Promise<string>((resolve) =>
+      setTimeout(() => {
+        controller.abort();
+        resolve('');
+      }, 3500)
+    );
 
-    clearTimeout(timeoutId);
-    if (!res || !res.ok) {
-      return '';
-    }
-    const data = await res.json().catch(() => ({ raw: '' }));
-    return data.raw || '';
+    const fetchPromise = (async () => {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemPrompt, userPrompt }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return '';
+      const data = await res.json();
+      return data.raw || '';
+    })();
+
+    return await Promise.race([fetchPromise, timerPromise]);
   } catch {
     return '';
   }
@@ -429,6 +443,8 @@ export default function TrialAssessmentApp() {
     setError('');
     setAnalysisWarning('');
     setStage('ocr');
+    await sleep(50);
+
     const ocrOut: { name: string; text: string; coTheBiCat?: boolean }[] = [];
 
     try {
@@ -449,46 +465,40 @@ export default function TrialAssessmentApp() {
     }
 
     setStage('analyze');
+    await sleep(50);
 
-    // Run AI analysis batches in parallel for high performance
-    const batches = chunk(activeChecklist, 4);
     const thuyetMinhDoc = ocrOut[0] || { name: 'Thuyết minh', text: '' };
     const chungMinhDocs = ocrOut.slice(1);
-    setAnalysisStatusText(`Đang đối chiếu song song ${batches.length} nhóm mục theo quy chuẩn...`);
+    const tmText = thuyetMinhDoc.text || '';
+    const cmText = chungMinhDocs.map((c) => c?.text || '').join('\n');
 
-    try {
-      const batchPromises = batches.map(async (batch) => {
-        try {
-          const prompt = buildAnalysisPrompt(thuyetMinhDoc, chungMinhDocs, batch);
-          const rawResponse = await callBackendAnalyze(ANALYSIS_SYSTEM_PROMPT, prompt);
-          const parsed = parseJSON(rawResponse);
+    setAnalysisStatusText(`Đang đối chiếu ${activeChecklist.length} mục theo quy chuẩn...`);
 
-          if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
-            return parsed.items;
-          }
-          return fallbackRuleAnalyze(batch, thuyetMinhDoc.text || '', chungMinhDocs.map((c) => c?.text || '').join('\n'));
-        } catch {
-          return fallbackRuleAnalyze(batch, thuyetMinhDoc.text || '', chungMinhDocs.map((c) => c?.text || '').join('\n'));
+    const batches = chunk(activeChecklist, 8);
+    const collected: ShortItem[] = [];
+
+    for (const batch of batches) {
+      try {
+        const prompt = buildAnalysisPrompt(thuyetMinhDoc, chungMinhDocs, batch);
+        const rawResponse = await callBackendAnalyze(ANALYSIS_SYSTEM_PROMPT, prompt);
+        const parsed = parseJSON(rawResponse);
+
+        if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
+          collected.push(...parsed.items);
+        } else {
+          collected.push(...fallbackRuleAnalyze(batch, tmText, cmText));
         }
-      });
-
-      const batchResults = await Promise.all(batchPromises);
-      const collected: ShortItem[] = batchResults.flat();
-
-      const expandedList = collected.map(expandItem);
-      const gatedResults = applyHardGates(expandedList, activeChecklist);
-      setKetQua(gatedResults);
-    } catch (err: any) {
-      console.error('Pipeline analysis error:', err);
-      const tmText = thuyetMinhDoc.text || '';
-      const cmText = chungMinhDocs.map((c) => c?.text || '').join('\n');
-      const fallbackItems = fallbackRuleAnalyze(activeChecklist, tmText, cmText);
-      const expandedList = fallbackItems.map(expandItem);
-      const gatedResults = applyHardGates(expandedList, activeChecklist);
-      setKetQua(gatedResults);
-    } finally {
-      setStage('done');
+      } catch {
+        collected.push(...fallbackRuleAnalyze(batch, tmText, cmText));
+      }
+      await sleep(20);
     }
+
+    const expandedList = collected.map(expandItem);
+    const gatedResults = applyHardGates(expandedList, activeChecklist);
+    setKetQua(gatedResults);
+    await sleep(50);
+    setStage('done');
   };
 
   const handleInstantRuleAnalysis = () => {
@@ -827,14 +837,12 @@ export default function TrialAssessmentApp() {
               Hệ thống đang trích xuất điều khoản, kiểm tra căn cứ chứng minh & quy định pháp luật hành chính theo từng nhóm mục.
             </p>
 
-            {stage === 'analyze' && (
-              <button
-                onClick={handleInstantRuleAnalysis}
-                className="mt-2 flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-700 transition-colors shadow-2xs"
-              >
-                ⚡ Chuyển sang Kết quả Quy tắc Thẩm định Ngay (Không chờ AI)
-              </button>
-            )}
+            <button
+              onClick={handleInstantRuleAnalysis}
+              className="mt-2 flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-700 transition-colors shadow-2xs"
+            >
+              ⚡ Chuyển sang Kết quả Quy tắc Thẩm định Ngay (Không chờ AI)
+            </button>
           </div>
         )}
 

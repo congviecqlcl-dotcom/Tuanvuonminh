@@ -43,7 +43,7 @@ app.post("/api/ocr", async (req, res) => {
     let extractedText = "";
 
     if (ai) {
-      const modelsToTry = ["gemini-3.6-flash", "gemini-2.5-flash"];
+      const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash"];
       for (const modelName of modelsToTry) {
         try {
           const apiPromise = ai.models.generateContent({
@@ -66,7 +66,7 @@ app.post("/api/ocr", async (req, res) => {
           });
 
           const timeoutPromise = new Promise<null>((_, reject) =>
-            setTimeout(() => reject(new Error("OCR timeout")), 12000)
+            setTimeout(() => reject(new Error("OCR timeout")), 6000)
           );
 
           const response = (await Promise.race([apiPromise, timeoutPromise])) as any;
@@ -122,7 +122,7 @@ app.post("/api/analyze", async (req, res) => {
     let rawResponse = "";
 
     if (ai) {
-      const modelsToTry = ["gemini-3.6-flash", "gemini-2.5-flash"];
+      const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash"];
       for (const modelName of modelsToTry) {
         try {
           const config: any = {
@@ -139,7 +139,7 @@ app.post("/api/analyze", async (req, res) => {
           });
 
           const timeoutPromise = new Promise<null>((_, reject) =>
-            setTimeout(() => reject(new Error("Gemini API timeout")), 12000)
+            setTimeout(() => reject(new Error("Gemini API timeout")), 6000)
           );
 
           const response = (await Promise.race([apiPromise, timeoutPromise])) as any;
